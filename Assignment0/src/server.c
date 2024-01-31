@@ -71,18 +71,11 @@ int server(char *server_port) {
         if (recv_code == -1) {
             perror("server fails to receive sent info from client");
             close(clientfd);
-            close(servsock);
-            return 5;
+            //close(servsock);
+            //return 5;
         } else if (recv_code != 0) {
-          if (recv_code > 0 && recv_code <= RECV_BUFFER_SIZE) {
             write(STDOUT_FILENO, recv_msg, recv_code);
             fflush(stdout);
-          } else {
-            perror("Invalid recv_code value");
-            close(clientfd);
-            close(servsock);
-            return 6;
-          }
         } else {
             break;
         }
@@ -94,7 +87,7 @@ int server(char *server_port) {
     }
 
     // close the server socket
-    close(servsock);
+    //close(servsock);
 
     return 0;
 }
