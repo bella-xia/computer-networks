@@ -36,7 +36,7 @@
   } while (0)
 #endif
 
-#define INIT_TTL 255
+#define INIT_TTL 64
 #define PACKET_DUMP_SIZE 1024
 #define BROADCAST_MAC {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
