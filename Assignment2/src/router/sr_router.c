@@ -133,16 +133,16 @@ void sr_handlepacket(struct sr_instance *sr,
     {
       // forward packet
 
+      // 1. decrement TTL
+
       // Find match for the destination IP address in the routing table
       struct sr_rt *rt_walker = sr->routing_table;
       while (rt_walker->next)
       {
         if (rt_walker->dest.s_addr == ip_packet_hdr->ip_dst)
         {
-          // decrement TTL
-          ip_packet_hdr->ip_ttl--;
-
           // ip case 1: ttl expired --> send back TIME_EXCEED icmp
+          ip_packet_hdr->ip_ttl--;
           if (ip_packet_hdr->ip_ttl == 0)
           {
             fprintf(stdout, "ip case 1: ttl expired --> send back TIME_EXCEED icmp\n");
@@ -259,16 +259,20 @@ void modify_arp_hdr(sr_arp_hdr_t *reply_arp_hdr,
 }
 
 void modify_ip_hdr(sr_ip_hdr_t *reply_ip_hdr,
-                   sr_ip_hdr_t *src_ip_hdr, struct sr_if *interface)
+                   sr_ip_hdr_t *src_ip_hdr, struct sr_if *interface, int not_echo_reply)
 {
   if (src_ip_hdr)
   {
     memcpy((uint8_t *)reply_ip_hdr, (uint8_t *)src_ip_hdr, sizeof(sr_ip_hdr_t));
     reply_ip_hdr->ip_sum = 0;
-    reply_ip_hdr->ip_ttl = INIT_TTL;
     reply_ip_hdr->ip_src = interface->ip;
     reply_ip_hdr->ip_dst = src_ip_hdr->ip_src;
     reply_ip_hdr->ip_p = ip_protocol_icmp;
+    reply_ip_hdr->ip_ttl = INIT_TTL;
+    if (not_echo_reply)
+    {
+      reply_ip_hdr->ip_len = htons(sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t));
+    }
     reply_ip_hdr->ip_sum = cksum(reply_ip_hdr, sizeof(sr_ip_hdr_t));
   }
 }
@@ -336,17 +340,23 @@ void handle_arp_request(struct sr_instance *sr,
   print_hdrs(reply_packet, len);
 
   send_packet_with_status(sr, reply_packet, len, target_if);
+  free(reply_packet);
 }
 
 void handle_arp_reply(struct sr_instance *sr, uint8_t *packet)
 {
   sr_arp_hdr_t *arp_packet_hdr = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
+  fprintf(stdout, "ip address requested:\n");
+  print_addr_ip_int(ntohl(arp_packet_hdr->ar_sip));
+  fprintf(stdout, "found corresponding MAC:\n");
+  print_addr_eth(arp_packet_hdr->ar_sha);
   struct sr_arpreq *arpreq_for_reply = sr_arpcache_insert(&(sr->cache),
                                                           arp_packet_hdr->ar_sha,
                                                           arp_packet_hdr->ar_sip);
   struct sr_packet *cur_packet = arpreq_for_reply->packets;
   uint8_t *reply_packet;
   struct sr_if *interface;
+
   while (cur_packet)
   {
     reply_packet = cur_packet->buf;
@@ -357,9 +367,9 @@ void handle_arp_reply(struct sr_instance *sr, uint8_t *packet)
 
     if (ntohs(((sr_ethernet_hdr_t *)reply_packet)->ether_type) == ethertype_ip)
     {
-      // because of change of ttl, need to recalculate checksum
       sr_ip_hdr_t *reply_packet_ip_hdr = (sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t));
       reply_packet_ip_hdr->ip_sum = 0;
+      reply_packet_ip_hdr->ip_ttl--;
       reply_packet_ip_hdr->ip_sum = cksum(reply_packet_ip_hdr, sizeof(sr_ip_hdr_t));
     }
 
@@ -383,7 +393,7 @@ void handle_ip_time_exceed(struct sr_instance *sr,
   // set ip header
   modify_ip_hdr((sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t)),
                 (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)),
-                interface);
+                interface, 1);
 
   // set icmp header
   modify_icmp_hdr((sr_icmp_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)),
@@ -392,6 +402,7 @@ void handle_ip_time_exceed(struct sr_instance *sr,
   print_hdrs(reply_packet, reply_packet_len);
 
   send_packet_with_status(sr, reply_packet, reply_packet_len, interface);
+  free(reply_packet);
 }
 
 void handle_ip_forwarding(struct sr_instance *sr,
@@ -409,15 +420,16 @@ void handle_ip_forwarding(struct sr_instance *sr,
 
   if (ntohs(((sr_ethernet_hdr_t *)reply_packet)->ether_type) == ethertype_ip)
   {
-    // because of change of ttl, need to recalculate checksum
     sr_ip_hdr_t *reply_packet_ip_hdr = (sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t));
     reply_packet_ip_hdr->ip_sum = 0;
+    reply_packet_ip_hdr->ip_ttl--;
     reply_packet_ip_hdr->ip_sum = cksum(reply_packet_ip_hdr, sizeof(sr_ip_hdr_t));
   }
 
   print_hdrs(reply_packet, len);
 
   send_packet_with_status(sr, reply_packet, len, interface);
+  free(reply_packet);
 }
 
 void handle_ip_cached_packet(struct sr_instance *sr, struct sr_arpreq *cur_request)
@@ -441,7 +453,7 @@ void handle_ip_cached_packet(struct sr_instance *sr, struct sr_arpreq *cur_reque
 
       // set ip header
       modify_ip_hdr((sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t)),
-                    (sr_ip_hdr_t *)(cur_packet->buf + sizeof(sr_ethernet_hdr_t)), interface);
+                    (sr_ip_hdr_t *)(cur_packet->buf + sizeof(sr_ethernet_hdr_t)), interface, 1);
 
       // set icmp header
       modify_icmp_hdr((sr_icmp_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)),
@@ -450,8 +462,10 @@ void handle_ip_cached_packet(struct sr_instance *sr, struct sr_arpreq *cur_reque
       print_hdrs(reply_packet, reply_packet_len);
       // send packet
       send_packet_with_status(sr, reply_packet, reply_packet_len, interface);
+      free(reply_packet);
       // destroy packet
       sr_arpreq_destroy(&(sr->cache), cur_request);
+      return;
     }
 
     // ip case 5: send arp request per 1 seconds
@@ -471,9 +485,9 @@ void handle_ip_cached_packet(struct sr_instance *sr, struct sr_arpreq *cur_reque
 
     send_packet_with_status(sr, request_packet, request_packet_len, interface);
 
-    free(request_packet);
     cur_request->sent = time(NULL);
     cur_request->times_sent++;
+    return;
   }
 }
 
@@ -488,7 +502,7 @@ void handle_ip_net_unreachable(struct sr_instance *sr,
 
   // set ip header
   modify_ip_hdr((sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t)),
-                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface);
+                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface, 1);
 
   // set icmp header
   modify_icmp_hdr((sr_icmp_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)),
@@ -497,19 +511,21 @@ void handle_ip_net_unreachable(struct sr_instance *sr,
   print_hdrs(reply_packet, reply_packet_len);
 
   send_packet_with_status(sr, reply_packet, reply_packet_len, interface);
+  free(reply_packet);
 }
 
 void handle_ip_echoreply(struct sr_instance *sr, uint8_t *packet,
                          unsigned int len, struct sr_if *interface, struct sr_if *send_interface)
 {
   uint8_t *reply_packet = (uint8_t *)malloc(PACKET_DUMP_SIZE);
+  // memcpy(reply_packet, packet, len);
   // set ethernet header
   modify_ethernet_hdr((sr_ethernet_hdr_t *)reply_packet, (sr_ethernet_hdr_t *)packet,
                       send_interface, ethertype_ip);
 
   // set ip header
   modify_ip_hdr((sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t)),
-                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface);
+                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface, 0);
 
   // set icmp header
   modify_icmp_hdr((sr_icmp_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)),
@@ -523,6 +539,7 @@ void handle_ip_echoreply(struct sr_instance *sr, uint8_t *packet,
   print_hdrs(reply_packet, len);
 
   send_packet_with_status(sr, reply_packet, len, send_interface);
+  free(reply_packet);
 }
 
 void handle_ip_port_unreachable(struct sr_instance *sr, uint8_t *packet,
@@ -536,7 +553,7 @@ void handle_ip_port_unreachable(struct sr_instance *sr, uint8_t *packet,
 
   // set ip header
   modify_ip_hdr((sr_ip_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t)),
-                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface);
+                (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t)), interface, 1);
 
   // set icmp header
   modify_icmp_hdr((sr_icmp_hdr_t *)(reply_packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)),
@@ -545,4 +562,5 @@ void handle_ip_port_unreachable(struct sr_instance *sr, uint8_t *packet,
   print_hdrs(reply_packet, reply_packet_len);
 
   send_packet_with_status(sr, reply_packet, reply_packet_len, send_interface);
+  free(reply_packet);
 }

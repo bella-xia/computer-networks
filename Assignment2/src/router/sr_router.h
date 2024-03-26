@@ -85,7 +85,7 @@ void modify_ethernet_hdr(sr_ethernet_hdr_t *reply_ether_hdr, sr_ethernet_hdr_t *
 
 void modify_arp_hdr(sr_arp_hdr_t *reply_arp_hdr, sr_arp_hdr_t *src_arp_hdr, sr_ip_hdr_t *src_ip_hdr, struct sr_if *interface, unsigned short arp_opcode);
 
-void modify_ip_hdr(sr_ip_hdr_t *reply_ip_hdr, sr_ip_hdr_t *src_ip_hdr, struct sr_if *interface);
+void modify_ip_hdr(sr_ip_hdr_t *reply_ip_hdr, sr_ip_hdr_t *src_ip_hdr, struct sr_if *interface, int not_echo_reply);
 
 void modify_icmp_hdr(sr_icmp_hdr_t *reply_icmp_hdr, sr_icmp_hdr_t *src_icmp_hdr, uint8_t icmp_type, uint8_t icmp_code, uint8_t *packet);
 
