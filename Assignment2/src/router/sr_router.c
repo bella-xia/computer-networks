@@ -171,7 +171,7 @@ void sr_handlepacket(struct sr_instance *sr,
       }
       // not found
 
-      // ip case 6: ip packet w. router interface w/o entry in table  --> send net-unreachable ICMP packet
+      // ip case 6: ip packet w/o router interface w/o entry in table  --> send net-unreachable ICMP packet
       fprintf(stdout, "ip case 6: ip packet w. router interface w/o entry in table  --> send net-unreachable ICMP packet\n");
       handle_ip_net_unreachable(sr, packet, iface);
       return;

@@ -112,7 +112,7 @@ void handle_ip_forwarding(struct sr_instance *sr, uint8_t *packet, unsigned int 
 // ip case 5: send arp request per 1 seconds
 void handle_ip_cached_packet(struct sr_instance *sr, struct sr_arpreq *cur_request);
 
-// ip case 6: ip packet w. router interface w/o entry in table --> send net-unreachable ICMP packet
+// ip case 6: ip packet w/o router interface w/o entry in table --> send net-unreachable ICMP packet
 void handle_ip_net_unreachable(struct sr_instance *sr, uint8_t *packet, struct sr_if *interface);
 
 // ip case 7: ip packet w router interface w icmp w type 8 echo --> send echo reply
